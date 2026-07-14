@@ -1,0 +1,800 @@
+*workspace.txt*  Multi-project workspace manager for Neovim
+
+WORKSPACE.NVIM                                                      *workspace*
+
+A plugin for managing multi-project workspaces with sessions, workspaces, and
+tabs. Organize code repositories into named work sessions with cross-root
+searching, LSP multi-root support, and persistent session recovery.
+
+==============================================================================
+INTRODUCTION                                                  *workspace-intro*
+
+workspace.nvim provides a four-layer hierarchical model for organizing your
+work:
+
+  Project    ~  A global, reusable code repository. Stored in projects.json
+  Session    ~  A named top-level work unit containing a complete workspace
+  Workspace  ~  A container of tabs within a session
+  Tab        ~  The core work unit with a cwd and associated projects
+
+All data is persisted in ~/.local/share/nvim/workspace/
+
+==============================================================================
+MODEL                                                          *workspace-model*
+
+The hierarchical relationships are:
+
+  Session (top-level, persistent)
+    └── Workspace (tab container)
+          ├── Tab (cwd + project set)
+          │    └── Project (global, referenced by id)
+          ├── Tab
+          └── ...
+
+Key properties:
+
+- Project: Global element, not owned by any session/tab. Identified by stable
+  id. All project metadata stored centrally in projects.json.
+
+- Session: Named, persistent unit. References complete workspace state
+  (tabs, projects, buffers, layouts). Can be saved/loaded via :SessionSave
+  and :SessionLoad.
+
+- Workspace: Container of tabs within a session. Does not directly hold
+  projects or cwd—these are tab properties.
+
+- Tab: Core work unit with:
+    - cwd: current working directory
+    - project_ids: set of associated project ids (by reference)
+    - active_project_id: determines cwd and scope for search/LSP
+    - label: user-assigned name (optional)
+
+- Tab Template: Saved tab configuration (project set + layout) reusable
+  across sessions via :TabSaveAs and :TabLoad.
+
+==============================================================================
+COMMANDS                                                      *workspace-commands*
+
+PROJECT COMMANDS ~
+                                                              *:ProjectAdd*
+:ProjectAdd {path} [{id}]
+  Register a project globally. If {id} is omitted, it is derived from the
+  directory basename. Projects are stored in projects.json for reuse across
+  sessions.
+
+                                                              *:ProjectInit*
+:ProjectInit [{path}]
+  Promote a directory to a registered project in one step. With no
+  argument the current working directory is used. The directory is
+  scanned for any of the configured markers (default: .git, .project,
+  .workspace); if none is found, a .project JSON file is written at the
+  directory root with the schema
+
+      { "version":    1,
+        "id":         <derived or .project payload>,
+        "name":       <basename or .project payload>,
+        "created_at": <os.time()>,
+        "meta":       {} }
+
+  and the directory is then registered via `registry.register` — no
+  discover/scan pass is required. When the dir is already registered
+  (by root), the command is a no-op that surfaces the existing id.
+  When a `.project` file is already present, its `id` / `name` /
+  `meta` are honored as authoritative.
+
+                                                              *:ProjectRemove*
+:ProjectRemove {id}
+  Unregister a project. If the project is referenced in active sessions,
+  those references are preserved with a warning on load.
+
+                                                              *:ProjectList*
+:ProjectList
+  Open a snacks.nvim picker to browse and select projects. Default action
+  (<CR>): add the selected project to the current tab. Multiple projects can
+  be selected with <Tab> and added in batch.
+
+                                                              *:ProjectDiscover*
+:ProjectDiscover {glob}
+  Scan the filesystem matching {glob} (e.g., "~/codehub/*") and register
+  all projects found. Uses markers (.git, .project) to identify roots.
+  Performs symlink deduplication.
+
+                                                              *:ProjectRename*
+:ProjectRename {id} {name}
+  Rename a project. Updates the display name in all references.
+
+                                                              *:ProjectMove*
+:ProjectMove {id} {new_path}
+  Re-root an existing project to {new_path}. The directory must already
+  exist. Fires the WorkspaceProjectUpdated event on success.
+
+                                                              *:ProjectEdit*
+:ProjectEdit [{id}]
+  Interactively edit a project's name, root, and meta JSON via vim.ui.input
+  prompts. Without {id}, opens a picker to select a project.
+
+                                                              *:ProjectReload*
+:ProjectReload
+  Reload projects.json from disk. Use this if projects.json was edited
+  externally.
+
+SESSION COMMANDS ~
+                                                              *:SessionSave*
+:SessionSave [{name}]
+  Save the current session. If {name} is omitted, the currently active
+  session is updated. Creates sessions/{name}.json with the complete
+  workspace state, including tab layout, projects, and Neovim state.
+
+                                                              *:SessionLoad*
+:SessionLoad {name}
+  Load a named session from disk. Replaces the current workspace and
+  tabs with the saved state. Optionally confirms before overwriting
+  the current session.
+
+                                                              *:SessionDelete*
+:SessionDelete {name}
+  Delete a session file from disk permanently.
+
+                                                              *:SessionList*
+:SessionList
+  Open a snacks.nvim picker to browse saved sessions. Default action:
+  load the selected session. Shows session name, tab count, project count,
+  and modification time.
+
+                                                              *:SessionRename*
+:SessionRename {old} {new}
+  Rename a session from {old} to {new}.
+
+                                                              *:SessionInfo*
+:SessionInfo
+  Print info about the current session: name, tab count, and total
+  unique projects.
+
+WORKSPACE COMMANDS ~
+                                                              *:WorkspaceNewTab*
+:WorkspaceNewTab [{project_id}]
+  Create a new tab. Optionally initialize it with {project_id} as the
+  active project. If omitted, the tab is created empty.
+
+                                                              *:WorkspaceCloseTab*
+:WorkspaceCloseTab
+  Close the current tab. The last tab cannot be closed. When the active
+  tab is closed, the next active tab is determined by recency (LRU).
+
+                                                              *:WorkspaceSwitchTab*
+:WorkspaceSwitchTab {idx}
+  Switch to tab by 1-based index.
+
+                                                              *:WorkspaceMoveTab*
+:WorkspaceMoveTab {from} {to}
+  Reorder tabs: move tab at position {from} to position {to}.
+
+                                                              *:WorkspaceList*
+:WorkspaceList
+  Open a snacks.nvim picker to list and switch between tabs in the
+  current session. Shows tab label, index, and project count.
+
+                                                              *:WorkspaceProjects*
+:WorkspaceProjects
+  Open a snacks.nvim picker listing all unique projects across all tabs
+  in the current session. Default action: switch to that project in the
+  current tab.
+
+                                                              *:WorkspaceGrep*
+:WorkspaceGrep [{pattern}]
+  Grep across all projects in all tabs of the current session using
+  snacks.nvim picker. If {pattern} is provided, it is used as the initial
+  search term. Search roots are the union of all project roots.
+
+                                                        *:WorkspaceScopedGrep*
+:WorkspaceScopedGrep [{pattern}]
+  Grep with multi-project scope selection. Opens a picker to select projects
+  from the current session (multiple selection with <Tab>), then searches
+  across those projects. Default action: jump to match in snacks.nvim grep.
+
+                                                        *:WorkspaceScopedFind*
+:WorkspaceScopedFind [{pattern}]
+  Find files with multi-project scope selection. Opens a picker to select
+  projects from the current session (multiple selection with <Tab>), then
+  searches for files across those projects.
+
+                                              *:WorkspaceMigrateFromProjections*
+:WorkspaceMigrateFromProjections [--dry-run] [{path}]
+  Import project entries from projections.nvim's projections.json into
+  the workspace.nvim registry. With --dry-run (or -n), reports the
+  changes without mutating state. {path} optionally overrides the source
+  projections.json path.
+
+TAB COMMANDS ~
+                                                              *:TabAddProject*
+:TabAddProject [{id}]
+  Add a project to the current tab's project set. The project must already
+  be registered (see :ProjectAdd). Without {id}, opens the project picker.
+  When the tab had no projects before this add, the new project also
+  becomes the tab's active project and `:tcd` switches to its root —
+  IDE-style "open project in empty workspace".
+
+                                                              *:TabRemoveProject*
+:TabRemoveProject [{id}]
+  Remove a project from the current tab. If the removed project is the
+  active project, a different project becomes active. Without {id}, opens
+  the picker.
+
+                                                              *:TabSwitchProject*
+:TabSwitchProject {id}
+  Set {id} as the active project in the current tab. This affects the
+  current working directory (if cwd_strategy is "active_project") and
+  the scope for search and LSP operations.
+
+                                                              *:TabProjects*
+:TabProjects
+  Open a snacks.nvim picker listing projects in the current tab. Default
+  action: switch to that project as active.
+
+                                                              *:TabRename*
+:TabRename {label}
+  Set a human-readable label for the current tab. Used in tab displays
+  and workspace pickers.
+
+                                                              *:TabGrep*
+:TabGrep [{pattern}]
+  Live grep within the scope of the current tab (its projects). Uses
+  snacks.nvim picker with the union of all project roots in the tab as
+  search scope.
+
+                                                              *:TabGrepWord*
+:TabGrepWord
+  Same scope as :TabGrep but seeded with the word under the cursor (or a
+  visual selection); delegates to Snacks.picker.grep_word.
+
+                                                              *:TabFind*
+:TabFind [{pattern}]
+  Find files within the current tab's project scope. Opens snacks.nvim file
+  picker over the union of all project roots in the tab.
+
+                                                              *:TabSymbols*
+:TabSymbols
+  Show LSP symbols for the current tab using snacks.nvim symbol picker.
+
+                                                              *:TabSaveAs*
+:TabSaveAs {name}
+  Save the current tab's configuration (projects, layout, cwd) as a
+  reusable template. Stored in tab_templates/{name}.json.
+
+                                                              *:TabLoad*
+:TabLoad {name}
+  Load a saved tab template by name. Creates a new tab (or replaces the
+  current one) with the saved project set and layout.
+
+ROUTER COMMANDS ~
+                                                              *:Workspace*
+:Workspace
+  Open the workspace.nvim hierarchical command router (if router.nvim is
+  installed). Provides an interactive menu to navigate all workspace,
+  session, project, and tab operations. If router.nvim is not available,
+  this command gracefully degraded and displays a warning.
+
+==============================================================================
+CONFIGURATION                                            *workspace-config*
+
+Configure via require("workspace").setup({...}):
+
+>
+  require("workspace").setup({
+    data_dir = vim.fn.stdpath("data") .. "/workspace",
+
+    project = {
+      default_markers = { ".git", ".project", ".workspace" },
+      id_strategy = "basename",
+      auto_register_on_load = true,
+      presets = {
+        { path = "~/project1", id = "proj1" },
+        "~/project2",
+      },
+      auto_scan = {
+        enabled = false,
+        globs = { "~/codehub/*" },
+        markers = { ".git" },
+        max_depth = 3,
+      },
+      preview = {
+        command = "eza",
+        depth = 2,
+        show_hidden = false,
+      },
+    },
+
+    session = {
+      autosave_on_exit = true,
+      autoload_last_on_startup = false,
+      confirm_before_load = true,
+      snapshot_backend = "resession-auto",
+      preview = {
+        show_tab_labels = true,
+        show_project_active_marker = true,
+      },
+    },
+
+    tab = {
+      cwd_strategy = "active_project",
+      fallback_grep_to_cwd = true,
+    },
+
+    lsp = {
+      auto_register_workspace_folders = true,
+      excluded_clients = { "rust_analyzer" },
+    },
+
+    ui = {
+      picker = "snacks",
+    },
+  })
+<
+
+KEY OPTIONS ~
+
+project.presets ~
+  List of projects to register on startup. Can be full objects:
+    { path = "...", id = "...", meta = {...} }
+  Or short strings (path only, id derived):
+    "~/project"
+
+project.auto_scan ~
+  Directory patterns and markers to scan on startup. Disabled by default
+  to avoid slow startup. Use :ProjectDiscover for manual discovery.
+
+session.autosave_on_exit ~
+  If true, the current session is saved automatically on VimLeavePre.
+
+session.autoload_last_on_startup ~
+  If true, the last active session is loaded when nvim starts with no
+  file arguments.
+
+session.snapshot_backend ~
+  Selects how each tab's window/buffer state is captured into the session
+  file. Three values are supported:
+    "winlayout"      Pure-lua nested split tree + per-window cursor.
+                     Zero dependencies.
+    "mksession"      :mksession per-tab + sanitization. Captures more
+                     options (folds, resize, ...) by running Vim's session
+                     writer; the output is sanitized to drop cross-tab
+                     control commands so it can be safely sourced inside
+                     a single tabpage.
+    "resession-auto" Use resession.nvim if installed; otherwise fall back
+                     to "winlayout". This is the default.
+
+  The dispatcher resolves a saved blob's backend from its `kind` field,
+  so existing sessions saved under "winlayout" (or the legacy "files"
+  kind) keep loading regardless of the current setting.
+
+tab.cwd_strategy ~
+  Controls how tab cwd is determined:
+    "active_project": cwd = active project root
+    "manual": cwd managed manually, not synced to project
+
+lsp.excluded_clients ~
+  List of LSP client names to exclude from workspace folder registration.
+  Example: "rust_analyzer" manages its own workspace folders.
+
+==============================================================================
+API                                                            *workspace-api*
+
+workspace.nvim provides programmatic APIs for use in custom keymaps and
+plugins. All modules are under the workspace.* namespace.
+
+PROJECT API ~
+
+require("workspace.project"):
+
+  list()                                                *workspace.project.list*
+    Returns: { Project, ... }
+    Get all registered projects.
+
+  get(id)                                                *workspace.project.get*
+    Returns: Project | nil
+    Get project by id.
+
+  register(opts)                                      *workspace.project.register*
+    Args: { path = string, id = string?, meta = table? }
+    Returns: Project | nil
+    Register a new project or update existing.
+
+  unregister(id)                                      *workspace.project.unregister*
+    Returns: boolean
+    Remove a project.
+
+  discover(opts, settings)                            *workspace.project.discover*
+    Args: { glob = string }, { dry_run = boolean? }
+    Returns: { Candidate, ... }
+    Scan for projects matching glob pattern.
+
+SESSION API ~
+
+require("workspace.session.api"):
+
+  save(name)                                            *workspace.session.save*
+    Args: name = string?
+    Returns: ok, err
+    Save current workspace to named session.
+
+  load(name)                                            *workspace.session.load*
+    Args: name = string
+    Returns: ok, err
+    Load named session.
+
+  delete(name)                                          *workspace.session.delete*
+    Args: name = string
+    Returns: ok, err
+    Delete session.
+
+  list()                                                *workspace.session.list*
+    Returns: { { name, tab_count, project_count, modified_at }, ... }
+    List all saved sessions.
+
+  current()                                            *workspace.session.current*
+    Returns: string | nil
+    Get name of currently loaded session.
+
+  rename(old, new)                                      *workspace.session.rename*
+    Args: old, new = string
+    Returns: ok, err
+    Rename session.
+
+WORKSPACE API ~
+
+require("workspace.workspace.api"):
+
+  tabs()                                                *workspace.workspace.tabs*
+    Returns: { Tab, ... }
+    Get all tabs in current workspace (ordered).
+
+  active()                                            *workspace.workspace.active*
+    Returns: Tab | nil
+    Get currently active tab.
+
+  active_index()                                  *workspace.workspace.active_index*
+    Returns: number | nil
+    Get 1-based index of active tab.
+
+  new_tab(opts)                                      *workspace.workspace.new_tab*
+    Args: { project_id = string?, label = string?, cwd = string? }
+    Create a new tab.
+
+  close_tab(idx)                                    *workspace.workspace.close_tab*
+    Args: idx = number?
+    Close tab by index (default: current).
+
+  switch_tab(idx)                                  *workspace.workspace.switch_tab*
+    Args: idx = number
+    Activate tab by index.
+
+  reorder_tabs(from, to)                        *workspace.workspace.reorder_tabs*
+    Args: from, to = number
+    Move tab from one position to another.
+
+  snapshot()                                        *workspace.workspace.snapshot*
+    Returns: Snapshot
+    Capture current workspace state for persistence.
+
+  restore(snapshot)                                *workspace.workspace.restore*
+    Args: snapshot = Snapshot
+    Restore workspace from snapshot.
+
+TAB API ~
+
+require("workspace.tab.api"):
+
+  projects()                                            *workspace.tab.projects*
+    Returns: { Project, ... }
+    Get all projects in current tab.
+
+  active()                                              *workspace.tab.active*
+    Returns: Project | nil
+    Get active project in current tab.
+
+  add_project(tabnr, id)                            *workspace.tab.add_project*
+    Args: tabnr = number?, id = string
+    Add project to tab.
+
+  remove_project(tabnr, id)                      *workspace.tab.remove_project*
+    Args: tabnr = number?, id = string
+    Remove project from tab.
+
+  switch_active(id)                                *workspace.tab.switch_active*
+    Args: id = string
+    Set active project in tab.
+
+  rename(tabnr, label)                                  *workspace.tab.rename*
+    Args: tabnr = number?, label = string
+    Set tab label.
+
+  scope_roots(tabnr)                                *workspace.tab.scope_roots*
+    Args: tabnr = number?
+    Returns: { string, ... }
+    Get project roots (search scope) for tab.
+
+==============================================================================
+EVENTS                                                      *workspace-events*
+
+workspace.nvim emits custom User events for integration with other plugins.
+Subscribe using vim.api.nvim_create_autocmd():
+
+>
+  vim.api.nvim_create_autocmd("User", {
+    pattern = "WorkspaceSessionLoaded",
+    callback = function(event)
+      -- event.data.name = session name
+    end,
+  })
+<
+
+Available events:
+
+Project registry events ~
+
+WorkspaceProjectRegistered                      *WorkspaceProjectRegistered*
+  Fired when a brand-new project id is added to the registry.
+  event.data: { id = string, project = Project }
+
+WorkspaceProjectUpdated                            *WorkspaceProjectUpdated*
+  Fired when an existing project id is updated (incl. :ProjectMove,
+  :ProjectRename, :ProjectEdit).
+  event.data: { id = string, project = Project }
+
+WorkspaceProjectUnregistered                  *WorkspaceProjectUnregistered*
+  Fired when a project is removed from the registry.
+  event.data: { id = string }
+
+Session events ~
+
+WorkspaceSessionSaved                                *WorkspaceSessionSaved*
+  Fired after a session JSON is written to disk.
+  event.data: { name = string }
+
+WorkspaceSessionLoaded                              *WorkspaceSessionLoaded*
+  Fired after a session is restored.
+  event.data: { name = string }
+
+WorkspaceSessionDeleted                            *WorkspaceSessionDeleted*
+  Fired after a session file is deleted from disk.
+  event.data: { name = string }
+
+WorkspaceSessionRenamed                            *WorkspaceSessionRenamed*
+  Fired after a session is renamed on disk.
+  event.data: { from = string, to = string }
+
+Tab events ~
+
+WorkspaceTabProjectAdded                          *WorkspaceTabProjectAdded*
+  Fired when a project is added to a tab.
+  event.data: { tabnr = number, project_id = string }
+
+WorkspaceTabProjectRemoved                      *WorkspaceTabProjectRemoved*
+  Fired when a project is removed from a tab.
+  event.data: { tabnr = number, project_id = string }
+
+WorkspaceTabActiveChanged                        *WorkspaceTabActiveChanged*
+  Fired when the active project of a tab changes.
+  event.data: { tabnr = number, project_id = string }
+
+WorkspaceTabCwdChanged                              *WorkspaceTabCwdChanged*
+  Fired when a tab's cwd changes.
+  event.data: { tabnr = number, cwd = string }
+
+WorkspaceTabRenamed                                    *WorkspaceTabRenamed*
+  Fired when a tab is renamed.
+  event.data: { tabnr = number, label = string }
+
+WorkspaceTabReordered                                *WorkspaceTabReordered*
+  Fired when tabs are reordered.
+  event.data: { from = number, to = number }
+
+Reactive sync ~                                  *workspace-reactive-sync*
+
+The eight registry/session/tab mutation events above are subscribed
+internally by lua/workspace/integration/router_refresh.lua. When any of
+them fires while a router-rendered Snacks picker is open, the bridge
+invalidates router's items() cache and re-opens the current node so the
+list reflects the post-mutation state without a manual refresh.
+
+The bridge invalidates the cache even when no picker is open, so the
+next :ProjectList / :SessionList / :Workspace shows fresh data — there
+is no need to restart Neovim after a CLI :ProjectDiscover or
+:ProjectMove.
+
+==============================================================================
+ROUTER                                                      *workspace-router*
+
+workspace.nvim integrates with router.nvim, a hierarchical command browser,
+for organized access to all operations.
+
+If router.nvim is installed and configured, use:
+
+  :Workspace               Open workspace router entry point
+  :Router                  Open global router (workspace as a subtree)
+
+The router provides structured navigation through:
+  - Projects (list, add, discover, remove, rename)
+  - Sessions (list, save, load, delete, rename)
+  - Workspace tabs (new, close, switch, move, reorder)
+  - Tab operations (add/remove projects, rename, grep, find)
+  - Search scoped (multi-project grep/find via picker)
+
+For detailed router integration docs, see picker-router-workspace.md.
+
+If router.nvim is not installed, all commands remain available via direct
+:ProjectAdd, :SessionLoad, etc. commands.
+
+==============================================================================
+TIPS & TROUBLESHOOTING                              *workspace-troubleshooting*
+
+LSP not registering workspace folders ~
+  Ensure the LSP client is not in lsp.excluded_clients. Some clients like
+  rust_analyzer require manual configuration.
+
+projects.json corruption ~
+  If projects.json is corrupted or unreadable:
+    1. Backup: cp projects.json projects.json.bak
+    2. Delete: rm projects.json
+    3. Re-register: :ProjectAdd /path/to/project
+    4. Or use :ProjectDiscover ~/dir/* to batch re-register
+
+Session fails to load ~
+  If a session references a missing project:
+    1. Run :ProjectReload to update registry
+    2. Use :SessionList to inspect
+    3. Manually edit the session JSON if needed
+
+Slow startup with auto_scan ~
+  Disable auto-scanning:
+    project = { auto_scan = { enabled = false } }
+  Use :ProjectDiscover manually instead.
+
+==============================================================================
+SNAPSHOT FORMAT                                       *workspace-snapshot*
+
+Each session JSON contains, per tab, an `nvim_state` field holding a
+JSON-encoded blob describing the tab's window layout:
+
+  {
+    kind   = "winlayout",
+    layout = <vim.fn.winlayout()>,            -- nested split tree
+    wins   = { ["<winid>"] = { file, cursor, topline }, ... },
+    files  = { <visible file paths>, ... },   -- back-compat list
+  }
+
+On load, snapshot.restore walks `layout` to recreate the exact split
+structure (`row` -> :vsplit, `col` -> :split, `leaf` -> :edit), then
+applies cursor position and topline per window.
+
+Top-level `listed_buffers` carries every globally-listed buffer at save
+time, so `:badd`-only hidden buffers (those never displayed in a
+window) are also restored on load.
+
+The legacy `kind = "files"` blob is still accepted on load for
+sessions saved by earlier versions.
+
+==============================================================================
+PERSISTENT STATE                              *workspace-persistent-state*
+
+`state.json` lives at `<data_dir>/state.json` and holds the metadata
+layer of the workspace — per-tab label/order/cwd/project_ids and
+active_project_id — independent of any named session. Every reactive
+mutation event (project Registered/Updated/Unregistered, tab
+ProjectAdded/Removed/ActiveChanged/CwdChanged/Renamed/Reordered) is
+debounced and flushed to this file, even when no session is active.
+
+`state.json` deliberately excludes the per-tab `nvim_state` blob and
+the global `listed_buffers` list — those remain session-only.
+
+On `workspace.setup()` the integration immediately and non-disruptively
+rehydrates `tab_state` from disk via `restore_meta()` before any user
+command runs, so cold-start no-session edits survive a restart. The
+hydrate step does not open new tabs, replace buffers, or `:badd` files.
+
+`:SessionLoad` writes through `state.json` after a successful restore
+so the persistent layer reflects the just-loaded session.
+
+Defaults: >
+    persistent_state = {
+      enabled     = false,  -- DEFAULT OFF; opt in for cross-restart memory
+      debounce_ms = nil,    -- falls back to session.autosave_debounce_ms (500)
+    }
+<
+With the default `enabled = false`, tab/project mutations are pure
+in-memory; explicit `:SessionSave <name>` is the canonical persistence
+path. Set `cfg.persistent_state.enabled = true` to opt into IDE-style
+remember-everything behaviour (rehydrate at cold start + write through
+on every mutation).
+
+==============================================================================
+INTEGRATIONS                                       *workspace-integrations*
+
+Alpha dashboard ~                                *workspace-alpha*
+
+If `cfg.ui.dashboard.alpha_section = true` and at least one session
+has been saved, `require("workspace.ui.dashboard").alpha_section()`
+returns an alpha.nvim-compatible group of buttons listing the most
+recently modified sessions. Each button calls
+`session.load(name, { force = true })`. Returns nil otherwise so the
+host can skip rendering.
+
+NvChad tabufline ~                               *workspace-tabufline*
+
+`require("workspace.integration.tabufline").setup()` is called from
+`workspace.setup()` (pcall-wrapped). It detects NvChad and registers a
+`User WorkspaceTabRenamed` autocmd that calls :redrawtabline so labels
+propagate. NvChad's tabufline `tabs()` does not expose an extension
+point for injecting workspace labels directly; hosts that want the
+workspace label rendered should override `tabs()` and call
+`require("workspace.ui.tabline").tab_name(tabnr)` themselves.
+
+Snacks.explorer ~                              *workspace-explorer*
+
+`require("workspace.integration.explorer").setup()` is called from
+`workspace.setup()` (pcall-wrapped). When
+`cfg.ui.explorer.auto_follow_active_project` is truthy (default), the
+augroup `WorkspaceExplorerFollow` listens for User
+`WorkspaceTabActiveChanged` events and calls
+`Snacks.picker.explorer({ cwd = <new active project root> })`. Snacks
+re-uses the existing "explorer" source picker, so the sidebar window
+is updated in place. The host owns the sidebar's position
+(`right` recommended) and Snacks-side flags (`follow_file`,
+`git_status`, `watch`, ...) via the snacks plugin spec. The handler
+is a no-op when no explorer picker is open.
+
+`require("workspace.integration.explorer").pick_root_for_explorer()`
+is a quick picker (over `vim.ui.select`) that switches the explorer
+root to a project on the current tab WITHOUT changing the tab's
+active project. Hosts can bind it under `<leader>np`.
+
+Multi-root explorer (experimental) ~        *workspace-explorer-multiroot*
+
+`require("workspace.integration.explorer_multiroot")` (Scheme B,
+experimental, default off) registers a custom Snacks.picker source
+named `workspace_explorer`. When enabled, the picker's top level lists
+every project on the current tab as a folder row; selecting a row
+drills into a regular single-root
+`Snacks.picker.explorer({ cwd = <root> })`. The list refreshes on the
+eight reactive sync events plus `WorkspaceTabActiveChanged`, which
+never relocates the picker — multi-root preserves all roots regardless
+of which project is active.
+
+Default is off. Enable via:
+>
+    ui = {
+      explorer_multiroot = {
+        enabled = true,
+      },
+    }
+<
+Recommended host keymap:
+>
+    vim.keymap.set("n", "<leader>nw", function()
+      require("workspace.integration.explorer_multiroot").open()
+    end, { desc = "Workspace: multi-root explorer" })
+<
+v1 acceptance contract and explicit deferred features (inline subtree
+expansion, diagnostics overlay on project rows, cross-root file-op
+actions, full per-root git_status, file-watch debouncing) are
+documented in `DESIGN_NOTES.md` and tracked under "Future Work" in
+`README.md`.
+
+==============================================================================
+TESTING                                                  *workspace-testing*
+
+Unit tests (plenary.busted) live in `test/spec/`:
+
+  cd ~/code/neovim/plugins/workspace.nvim
+  nvim --headless -c "PlenaryBustedDirectory test/spec"
+
+End-to-end regression probe in `test/regression.lua` exercises the
+full setup -> command -> mutation -> refresh -> snapshot -> restore
+flow under a sandboxed temp data_dir, with mocked Snacks picker:
+
+  nvim --headless --clean -u NONE -l test/regression.lua
+
+The probe exits 0 when all checks pass, 1 otherwise.
+
+==============================================================================
+ vim:tw=78:ts=2:et:ft=help:norl:
