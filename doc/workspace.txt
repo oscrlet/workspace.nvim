@@ -513,6 +513,29 @@ require("workspace.tab.api"):
     Returns: { string, ... }
     Get project roots (search scope) for tab.
 
+SCOPE API ~
+
+require("workspace.scope"):
+
+  tab_roots(tabnr)                                *workspace.scope.tab_roots*
+    Args: tabnr = number?
+    Returns: { string, ... }
+    Get roots for the current tab, or for tabnr when supplied.
+
+  session_roots()                            *workspace.scope.session_roots*
+    Returns: { string, ... }
+    Get unique roots for projects in the current session.
+
+  project_roots(ids)                         *workspace.scope.project_roots*
+    Args: ids = { string, ... }?
+    Returns: { string, ... }
+    Get unique roots for selected project ids. When ids is omitted, get roots
+    for every registered project.
+
+These functions are the stable boundary for host search, picker, and explorer
+integrations. Results preserve domain order and omit missing or rootless
+projects.
+
 ==============================================================================
 EVENTS                                                      *workspace-events*
 

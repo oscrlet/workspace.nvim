@@ -591,13 +591,36 @@ in the same picker, diagnostics overlay on project rows, file-op actions
 across roots from the multi-root view, full per-root git_status, and
 file-watch debouncing across roots.
 
+## Public scope API
+
+Host integrations can consume root scopes without traversing Workspace's
+tab, session, or project state modules:
+
+```lua
+local scope = require("workspace.scope")
+
+scope.tab_roots()                    -- roots on the current tab
+scope.tab_roots(tabnr)               -- roots on a specific tab
+scope.session_roots()                -- roots across the current session
+scope.project_roots({ "api", "web" }) -- roots for selected project ids
+scope.project_roots()                -- roots for every registered project
+```
+
+All results preserve their domain order, omit missing/rootless projects, and
+deduplicate identical roots. This module is the stable integration boundary
+for search, explorer, and picker hosts; the underlying state modules remain
+implementation details.
+
 ## Testing
 
-Unit tests (plenary.busted) live in `test/spec/` (191 specs as of writing):
+Unit tests (plenary.busted) live in `test/spec/`:
 
 ```bash
 cd workspace.nvim
-nvim --headless -c "PlenaryBustedDirectory test/spec"
+nvim --headless -u NONE \
+  -c "lua vim.opt.rtp:append(vim.fn.expand('~/.local/share/nvim/lazy/plenary.nvim'))" \
+  -c 'runtime plugin/plenary.vim' \
+  -c "PlenaryBustedDirectory test/spec { minimal_init = 'test/minimal_init.lua', sequential = true }"
 ```
 
 End-to-end regression probe in `test/regression.lua` exercises the full
