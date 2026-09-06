@@ -40,9 +40,12 @@ function M.setup(opts)
     end)
   end
 
-  pcall(function()
-    require("workspace.integration.tabufline").setup()
-  end)
+  if M.config.ui and M.config.ui.tabline
+      and M.config.ui.tabline.integration == 'nvchad_tabufline' then
+    pcall(function()
+      require("workspace.integration.tabufline").setup()
+    end)
+  end
 
   -- Persistent tab/project state: subscribes to mutations and (immediately)
   -- rehydrates state.json into tab_state. Default-on; disable with
