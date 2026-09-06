@@ -5,7 +5,18 @@ projects — with cross-root search, multi-root LSP, and persistent recovery.
 
 ## Preview
 
-![workspace.nvim demo](docs/demo.png)
+![Workspace project actions through Router, dark](docs/demo-dark.png)
+
+<details>
+<summary>Light theme</summary>
+
+![Workspace project actions through Router, light](docs/demo-light.png)
+
+</details>
+
+Actual Workspace subtree rendered by Router + Volt with Workbench presentation.
+These are optional UI integrations, not Workspace core dependencies.
+[Capture notes](docs/PREVIEWS.md).
 
 ## Why workspace.nvim?
 
@@ -31,7 +42,20 @@ workspace.nvim introduces a four-layer hierarchical model for project management
 - **Workspace**: A container of tabs within a session. Manages the collection of open tabs and their active state.
 - **Tab**: The core work unit, holding a current working directory and a set of projects. The tab determines the scope for search and LSP operations.
 
-All persistence (sessions, project registry) is stored in `~/.local/share/nvim/workspace/`.
+Persistence uses `vim.fn.stdpath("data") .. "/workspace"` by default; override
+`data_dir` for another location. It is not fixed to a Linux/macOS home path.
+
+## Requirements
+
+Neovim 0.11+ is the documented baseline for the coordinated stack. Snacks powers
+the shipped picker/search commands. Registry and snapshot operations are separate
+from those UI adapters; Router, Volt Picker, Workbench and NvChad are optional.
+`resession.nvim` is optional: `resession-auto` falls back to the built-in
+`winlayout` backend. Plenary is not imported by the shipped runtime.
+`rg`, `fd` and `git` are source-specific tools, not needed for every operation.
+The `ui.picker` config comment mentions Telescope, but no Telescope backend is
+implemented: do not treat that value as a supported alternative.
+See [dependency and license notes](DEPENDENCIES.md).
 
 ## Install
 
@@ -39,7 +63,7 @@ Using [lazy.nvim](https://github.com/folke/lazy.nvim):
 
 ```lua
 {
-  "bytedance/workspace.nvim",
+  "oscrlet/workspace.nvim",
   dependencies = {
     "folke/snacks.nvim",  -- required for picker UI
   },
@@ -50,6 +74,35 @@ Using [lazy.nvim](https://github.com/folke/lazy.nvim):
 ```
 
 ## Setup
+
+### Workbench and Router composition
+
+For an application that owns setup order, disable implicit Router registration
+and the optional NvChad tabline adapter, then connect the plugins explicitly:
+
+```lua
+require("workspace").setup({
+  router = { enabled = false },
+  ui = { override_vim_select = false, tabline = { integration = "none" } },
+})
+-- Configure Router once (Snacks/Volt dependencies must already be available).
+local router = require("router")
+router.setup({
+  backend = "volt",
+  keys = { go_back = "<C-o>", action_menu = "<C-]>" },
+})
+require("router.subtrees").register_all()
+router.register_subtree("workspace", require("workspace.router_subtree"))
+require("workspace.integration.router_refresh").setup()
+require("workspace.integration.router_scopes").register()
+-- Finally, enable integrations={router=true,workspace=true} in Workbench setup.
+```
+
+Workspace owns projects, sessions, tab roots and persistence. Router owns route
+navigation; Workbench owns its Home/Drawer/Chrome. The host owns plugin loading,
+global keymaps, LSP server configuration and the choice of `vim.ui.select` owner.
+
+### Annotated configuration
 
 Configure workspace.nvim with an annotated example:
 
@@ -158,7 +211,7 @@ require("workspace").setup({
 
   -- UI configuration
   ui = {
-    picker = "snacks",  -- "snacks" | "telescope"
+    picker = "snacks",  -- shipped UI backend; no Telescope adapter is implemented
     -- vim.ui.select shim — re-route any plugin's selection prompt
     -- through Snacks.picker.select with the host-pinned router layout.
     override_vim_select = true,
@@ -429,11 +482,13 @@ Set `persistent_state.enabled = false` to disable the augroup entirely
 
 ## Router Integration
 
-workspace.nvim integrates with [router.nvim](https://github.com/bytedance/router.nvim), providing a hierarchical command menu accessible via `:Workspace` or `:Router` (if router is installed).
+workspace.nvim integrates with [router.nvim](https://github.com/oscrlet/router.nvim), providing a hierarchical command menu accessible via `:Workspace` or `:Router` (if router is installed and the subtree is registered).
 
-See [picker-router-workspace.md](../../../.config/nvim/picker-router-workspace.md) for detailed router subtree structure and navigation.
+See [explicit composition](#workbench-and-router-composition) and the shipped
+[subtree definitions](lua/workspace/router_subtree/nodes.lua) for route structure.
 
-If router.nvim is not installed, all commands remain available via `:` directly.
+Core project/session/tab commands remain available without Router. Commands
+that open Router menus require Router; picker/search commands require Snacks.
 
 ## Troubleshooting
 
@@ -505,7 +560,9 @@ Returns `nil` otherwise so the host can skip rendering.
 ### NvChad tabufline
 
 `require("workspace.integration.tabufline").setup()` is invoked from
-`workspace.setup()` (pcall-wrapped). It detects NvChad and registers a
+`workspace.setup()` only when `ui.tabline.integration = "nvchad_tabufline"`
+(the compatibility default, pcall-wrapped). Select `"none"` when Workbench owns
+Doc Band. The adapter detects NvChad and registers a
 `User WorkspaceTabRenamed` autocmd that calls `:redrawtabline`. NvChad's
 `tabufline.modules.tabs()` does not expose an extension point for
 injecting workspace labels; hosts that want the workspace label rendered
@@ -667,3 +724,9 @@ single-root explorers. Tracked enhancements for the next iteration:
   behind the router-styled picker this plugin integrates with.
 - [NvChad/base46](https://github.com/NvChad/base46) — the highlight system
   the picker theming derives its colors from.
+
+## License
+
+Repository-authored code and documentation are licensed under [MIT](LICENSE).
+See [DEPENDENCIES.md](DEPENDENCIES.md) for the dependency-license inventory and
+distribution checks. External dependencies keep their own licenses.
