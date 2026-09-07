@@ -670,6 +670,13 @@ implementation details.
 
 ## Testing
 
+`require('workspace').buffers()` returns live listed Neovim buffer IDs in session
+order, followed by newly opened buffers. Membership remains owned by Neovim;
+Workspace only retains ordering metadata, persisted as `listed_buffers`.
+The winlayout backend also saves the focused window, dimensions and view, and
+reconstructs nested split orientation. Legacy snapshots without these fields
+still restore files/layout but cannot recover focus/view data never saved.
+
 Unit tests (plenary.busted) live in `test/spec/`:
 
 ```bash

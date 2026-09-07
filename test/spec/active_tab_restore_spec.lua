@@ -40,7 +40,7 @@ describe("active tab restore (index-based)", function()
 
     -- Set the middle one active.
     local middle = tab_state.by_tabnr(nr2)
-    ws_state.set_active_tab_id(middle.id)
+    vim.api.nvim_set_current_tabpage(nr2)
 
     local snap = ws_snap.snapshot()
     assert.equals(3, #snap.tabs)
@@ -59,7 +59,7 @@ describe("active tab restore (index-based)", function()
     tab_state.ensure(nr3).order = 3
 
     local middle = tab_state.by_tabnr(nr2)
-    ws_state.set_active_tab_id(middle.id)
+    vim.api.nvim_set_current_tabpage(nr2)
 
     local snap = ws_snap.snapshot()
     assert.equals(2, snap.active_tab_index)
@@ -96,7 +96,7 @@ describe("active tab restore (index-based)", function()
     tab_state.ensure(nr3).order = 3
 
     local middle = tab_state.by_tabnr(nr2)
-    ws_state.set_active_tab_id(middle.id)
+    vim.api.nvim_set_current_tabpage(nr2)
 
     local snap = ws_snap.snapshot()
     -- Strip the new field to simulate a legacy session file.

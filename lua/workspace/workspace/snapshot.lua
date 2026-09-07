@@ -26,7 +26,8 @@ function M.snapshot()
       nvim_state       = nvim_state,
     }
   end
-  local active_id = ws_state.active_tab_id()
+  local active = tab_state.by_tabnr(vim.api.nvim_get_current_tabpage())
+  local active_id = active and active.id or ws_state.active_tab_id()
   local active_idx
   for i, tab in ipairs(tabs) do
     if tab.id == active_id then
@@ -40,7 +41,7 @@ function M.snapshot()
   local listed_buffers = {}
   do
     local seen = {}
-    for _, b in ipairs(vim.api.nvim_list_bufs()) do
+    for _, b in ipairs(require('workspace.buffers').list()) do
       if vim.bo[b].buflisted then
         local n = vim.api.nvim_buf_get_name(b)
         if n ~= "" and not seen[n] then
@@ -196,7 +197,7 @@ function M.restore(snap)
       tab._snap_id = entry.id
       new_tab_map[i] = nr
     else
-      vim.cmd("tabnew")
+      vim.cmd("silent tabnew")
       local nr = vim.api.nvim_get_current_tabpage()
       tab_state.remove(nr)
       local tab = tab_state.ensure(nr)
@@ -204,6 +205,7 @@ function M.restore(snap)
       new_tab_map[i] = nr
     end
     local nr  = new_tab_map[i]
+    vim.api.nvim_set_current_tabpage(nr)
     local tab = tab_state.by_tabnr(nr)
     -- Restore fields.
     tab.label  = entry.label
@@ -250,7 +252,7 @@ function M.restore(snap)
       local ok_dec, decoded = pcall(vim.json.decode, entry.nvim_state)
       local idx = vim.api.nvim_tabpage_get_number(nr)
       if ok_dec and type(decoded) == "table" then
-        pcall(vim.cmd, idx .. "tabnext")
+        pcall(vim.cmd, "silent " .. idx .. "tabnext")
         snapshot_dispatch.restore(decoded, nr)
       end
     end
@@ -260,7 +262,7 @@ function M.restore(snap)
   -- Navigate away first to avoid closing the active tab prematurely.
   if #old_tabs > 1 then
     -- Switch to first new tab.
-    vim.cmd("1tabnext")
+    vim.cmd("silent 1tabnext")
     for i = 2, #old_tabs do
       local nr = old_tabs[i]
       -- Check it still exists.
@@ -272,7 +274,7 @@ function M.restore(snap)
       if exists then
         -- Find its index and close.
         local idx = vim.api.nvim_tabpage_get_number(nr)
-        pcall(vim.cmd, idx .. "tabclose")
+        pcall(vim.cmd, "silent " .. idx .. "tabclose")
         -- Remove from state.
         tab_state.remove(nr)
       end
@@ -285,7 +287,7 @@ function M.restore(snap)
     local tab = tab_state.by_tabnr(nr)
     if not tab then return end
     ws_state.set_active_tab_id(tab.id)
-    pcall(vim.cmd, vim.api.nvim_tabpage_get_number(nr) .. "tabnext")
+    pcall(vim.cmd, "silent " .. vim.api.nvim_tabpage_get_number(nr) .. "tabnext")
   end
 
   if snap.active_tab_index then
@@ -304,6 +306,7 @@ function M.restore(snap)
   for _, f in ipairs(snap.listed_buffers or {}) do
     pcall(vim.cmd, "badd " .. vim.fn.fnameescape(f))
   end
+  require('workspace.buffers').restore_order(snap.listed_buffers)
 end
 
 return M

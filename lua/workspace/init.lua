@@ -2,6 +2,11 @@ local M = {}
 
 M.config = nil
 
+--- Listed Neovim buffers in session order; newly opened buffers follow them.
+function M.buffers()
+  return require('workspace.buffers').list()
+end
+
 function M.setup(opts)
   local config = require("workspace.config")
   local project = require("workspace.project")
