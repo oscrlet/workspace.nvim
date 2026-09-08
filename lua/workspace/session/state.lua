@@ -44,9 +44,10 @@ function M.acquire_lock(name)
     f:close()
     local pid = tonumber(pid_str)
     if pid then
-      -- Check if pid is alive: on POSIX, kill(pid, 0) returns 0 if alive.
-      -- We use lua os.execute with kill -0; if it succeeds, process alive.
-      local alive = (os.execute("kill -0 " .. tostring(pid) .. " 2>/dev/null") == 0)
+      -- Signal 0 probes process existence without a POSIX shell command.
+      -- EPERM also means the process exists, but belongs to another user.
+      local result, _, code = vim.uv.kill(pid, 0)
+      local alive = result == 0 or code == "EPERM"
       if alive then
         return false
       end

@@ -17,7 +17,7 @@ end
 --- Ensure parent directory exists.
 ---@param filepath string
 local function ensure_dir(filepath)
-  local dir = filepath:match("^(.*)/[^/]+$")
+  local dir = vim.fs.dirname(filepath)
   if dir then
     vim.fn.mkdir(dir, "p")
   end
@@ -99,7 +99,7 @@ function M.write(data)
   end
 
   -- Atomic rename.
-  local rok, rerr = os.rename(tmp, p)
+  local rok, rerr = vim.uv.fs_rename(tmp, p)
   if not rok then
     return false, "rename failed: " .. tostring(rerr)
   end

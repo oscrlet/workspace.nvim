@@ -69,7 +69,7 @@ function M.write(name, data)
   f:write(encoded)
   f:close()
 
-  local rok, rerr = os.rename(tmp, p)
+  local rok, rerr = vim.uv.fs_rename(tmp, p)
   if not rok then
     return false, "rename failed: " .. tostring(rerr)
   end
@@ -106,7 +106,7 @@ function M.list()
   local pattern = d .. "/*.json"
   local files = vim.fn.glob(pattern, false, true)
   for _, filepath in ipairs(files) do
-    local fname = filepath:match("([^/]+)%.json$")
+    local fname = vim.fs.basename(filepath):match("^(.*)%.json$")
     if fname then
       local mtime = vim.fn.getftime(filepath)
       local tab_count     = 0

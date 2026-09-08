@@ -71,7 +71,7 @@ function M.write(snap)
   end
   f:write(encoded)
   f:close()
-  local rok, rerr = os.rename(tmp, p)
+  local rok, rerr = vim.uv.fs_rename(tmp, p)
   if not rok then
     return false, "rename failed: " .. tostring(rerr)
   end

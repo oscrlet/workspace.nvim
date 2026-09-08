@@ -670,6 +670,15 @@ implementation details.
 
 ## Testing
 
+Windows persistence regressions (no external test dependencies):
+
+```sh
+nvim --headless -u NONE -i NONE -l test/windows_regression.lua
+```
+
+This uses temporary files to verify replacement writes, session/template names,
+PID locks, and a save/overwrite/restore round trip with real split windows.
+
 `require('workspace').buffers()` returns live listed Neovim buffer IDs in session
 order, followed by newly opened buffers. Membership remains owned by Neovim;
 Workspace only retains ordering metadata, persisted as `listed_buffers`.
